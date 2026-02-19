@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "flutter-coder": {
+      "command": "node",
+      "args": ["/Users/stevehall/development/flutter-coder/dist/index.js"]
+    }
+  }
+}
