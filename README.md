@@ -37,7 +37,9 @@ a **verified advanced-sample corpus**, and an opinionated **knowledge base** for
 Every sample in `src/data/samples/` is complete, self-contained Dart that passed
 `flutter analyze` with zero errors/warnings in a scratch app before landing here
 (test-category samples also pass `flutter test`). Categories: rendering, animation,
-architecture, async, platform, navigation, performance, testing, ui-patterns.
+architecture, async, platform, navigation, performance, testing, ui-patterns, and
+connectivity (BLE, MQTT, provisioning, serial, firmware↔app protocol, OTA — the
+device-companion layer for REC's embedded products).
 
 ## Setup
 

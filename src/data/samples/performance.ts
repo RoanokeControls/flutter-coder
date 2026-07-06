@@ -182,14 +182,15 @@ void main() {
     category: "performance",
     difficulty: "advanced",
     description:
-      "A 100k-item ListView.builder with every lever set deliberately: itemExtent for O(1) scroll-offset math (prototypeItem noted as the theme-dependent alternative), an explicit cacheExtent, addAutomaticKeepAlives disabled with the tradeoff documented, ValueKey-per-item plus an O(1) findChildIndexCallback so stateful rows keep their State when a shuffle reorders the data underneath them. Reach for this for any list beyond a few thousand rows, or whenever list rows mysteriously lose state after inserts/reorders.",
-    tags: ["listview", "listview.builder", "itemextent", "prototypeitem", "cacheextent", "findchildindexcallback", "keys", "valuekey", "addautomatickeepalives", "addrepaintboundaries", "large-list", "scrolling", "reorder"],
-    minFlutter: "3.24",
+      "A 100k-item ListView.builder with every lever set deliberately: itemExtent for O(1) scroll-offset math (prototypeItem noted as the theme-dependent alternative), an explicit scrollCacheExtent, addAutomaticKeepAlives disabled with the tradeoff documented, ValueKey-per-item plus an O(1) findChildIndexCallback so stateful rows keep their State when a shuffle reorders the data underneath them. Reach for this for any list beyond a few thousand rows, or whenever list rows mysteriously lose state after inserts/reorders.",
+    tags: ["listview", "listview.builder", "itemextent", "prototypeitem", "cacheextent", "scrollcacheextent", "findchildindexcallback", "keys", "valuekey", "addautomatickeepalives", "addrepaintboundaries", "large-list", "scrolling", "reorder"],
+    minFlutter: "3.42",
     packages: [],
     code: `// ListView.builder tuned for 100k rows. The list itself is cheap — every
 // cost that matters is in how the viewport materializes children, and in
 // whether Element state survives when the data reorders underneath it.
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 
 class Item {
   Item(this.id) : label = 'Item #$id';
@@ -244,10 +245,11 @@ class _BigListPageState extends State<BigListPage> {
           // prototypeItem is the alternative when height is uniform but
           // depends on theme/text scale; the two are mutually exclusive.
           itemExtent: 56,
-          // How far beyond the viewport children are built (logical px).
-          // Bigger = smoother fast flings, more live State. Tune against
-          // real fling speeds, not gut feeling.
-          cacheExtent: 300,
+          // How far beyond the viewport children are built. Bigger =
+          // smoother fast flings, more live State. Tune against real
+          // fling speeds, not gut feeling. (cacheExtent was deprecated in
+          // the 3.42 cycle for this sealed type: .pixels or .viewport.)
+          scrollCacheExtent: const ScrollCacheExtent.pixels(300),
           // KeepAlives wrap EVERY row in AutomaticKeepAlive machinery and
           // a NotificationListener — measurable at this scale and useless
           // unless rows actually call wantKeepAlive. Repaint boundaries
@@ -303,7 +305,7 @@ class _CounterRowState extends State<CounterRow> {
 void main() => runApp(const MaterialApp(home: BigListPage()));
 `,
     notes:
-      "itemExtent (or prototypeItem \u2014 they are mutually exclusive) is what makes scrollbar jumps O(1): without a fixed extent, jumping to 90% forces layout of everything on the way. findChildIndexCallback must be O(1) \u2014 hence the maintained id->index map, rebuilt on every reorder; a List.indexWhere scan inside it is O(visible x n) per rebuild. Return null from it for keys that no longer exist. Keys must encode data identity (item id), never the index \u2014 index keys glue State to positions and reproduce the classic wrong-row-state bug. addAutomaticKeepAlives: false removes per-child keep-alive machinery (worth it at this scale) but means State only survives for rows inside viewport+cacheExtent; anything scrolled far away is disposed, so durable per-item state (selection, favorites) belongs in the data layer, not row State. Keep addRepaintBoundaries at its default true \u2014 it stops one row's ink splash from repainting the whole viewport; only disable it for fully static rows where the extra layers cost more than they save.",
+      "itemExtent (or prototypeItem \u2014 they are mutually exclusive) is what makes scrollbar jumps O(1): without a fixed extent, jumping to 90% forces layout of everything on the way. findChildIndexCallback must be O(1) \u2014 hence the maintained id->index map, rebuilt on every reorder; a List.indexWhere scan inside it is O(visible x n) per rebuild. Return null from it for keys that no longer exist. Keys must encode data identity (item id), never the index \u2014 index keys glue State to positions and reproduce the classic wrong-row-state bug. addAutomaticKeepAlives: false removes per-child keep-alive machinery (worth it at this scale) but means State only survives for rows inside viewport+cacheExtent; anything scrolled far away is disposed, so durable per-item state (selection, favorites) belongs in the data layer, not row State. Keep addRepaintBoundaries at its default true \u2014 it stops one row's ink splash from repainting the whole viewport; only disable it for fully static rows where the extra layers cost more than they save. Migration: cacheExtent (double) was deprecated in the 3.42 cycle in favor of scrollCacheExtent, a sealed ScrollCacheExtent with .pixels()/.viewport() factories — as of 3.44 the type needs an explicit import from package:flutter/rendering.dart.",
   },
   {
     id: "image-memory-discipline",

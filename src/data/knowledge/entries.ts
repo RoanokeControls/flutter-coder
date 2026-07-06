@@ -1147,4 +1147,472 @@ dev_dependencies:
 \`\`\`
 `,
   },
+
+  // ── 10. Device connectivity stack ─────────────────────────────────────
+  {
+    id: "device-connectivity-stack",
+    title: "Device Connectivity Stack: BLE, LAN, MQTT, or Serial",
+    topic: "Device Integration",
+    summary:
+      "The 2026 decision guide for how a companion app talks to embedded hardware: BLE for battery/proximity/provisioning (flutter_blue_plus, verified), direct WiFi/LAN with mDNS discovery for big local payloads, MQTT via broker for fleet telemetry and control (mqtt_client reconnect/LWT/QoS patterns), and USB serial for bench tools (usb_serial is abandoned — desktop + flutter_libserialport instead). Includes a decision table by device class and the ESP32 realities: BLE+WiFi coexistence throughput collapse and the SoftAP provisioning dance.",
+    tags: [
+      "ble", "bluetooth", "mqtt", "wifi", "mdns", "usb", "serial", "esp32",
+      "provisioning", "flutter_blue_plus", "mqtt_client", "telemetry",
+      "license", "licensing",
+    ],
+    asOf: "2026-07",
+    content: `# Device Connectivity Stack: BLE, LAN, MQTT, or Serial
+
+Four transports cover every companion-app job. Pick per **device class**, not
+per preference — the radio budget of the hardware decides, not the app team.
+All package versions below were checked live against the pub.dev API in
+**July 2026**.
+
+## Decision table
+
+| Device class | Primary transport | Also | Avoid |
+|---|---|---|---|
+| Coin-cell sensor (CR2032, wakes to advertise) | BLE: connect, sync, disconnect fast | — | Holding the connection open — it eats the cell |
+| ESP32 appliance on mains (grill-controller class) | MQTT via broker for telemetry + control | BLE for provisioning and local fallback; HTTP/WS on LAN for bulk | Polling HTTP through the cloud |
+| Bench instrument (RP2040/PIC18 + CDC/FTDI) | USB serial from a **desktop** build | WS on LAN if it has a NIC | BLE — adds a radio for no reason |
+| Fleet in the field | MQTT via broker (Firebase/ClearBlade bridge) | BLE for commissioning visits | Any direct app→device dependency for normal operation |
+
+Multi-transport is normal: the appliance class provisions over BLE, operates
+over MQTT, and moves firmware-sized payloads over LAN. Hide it behind one
+\`DeviceLink\` interface in the app with an implementation per transport — the
+UI never knows which link is live.
+
+## BLE — battery, proximity, provisioning
+
+**Pick: \`flutter_blue_plus\` 2.3.10** (published 2026-06-30). It won 2025–26 on
+adoption — ~250k downloads/30d, roughly 4× the runner-up — which for a plugin
+wrapping two flaky platform stacks is the feature: every Android OEM quirk has
+an issue thread. **Licensing caveat (2.x): dual-license.** \`connect()\` now
+requires a \`license:\` argument — \`License.nonprofit\` is free, commercial use
+needs the paid tier (\`License.free\` is deprecated). For a commercial REC app,
+either budget the fbp commercial license or take the alternative below; decide
+per product, in writing, before the first \`connect()\` call ships.
+**Alternative: \`flutter_reactive_ble\` 5.5.0** (2026-05-22),
+Philips-maintained, MIT-licensed, stream-first API — the safer bet if your
+team prefers explicit connection-state streams over async calls, or when the
+fbp commercial license isn't justified. **Desktop/web:
+\`universal_ble\` 2.1.0** (2026-06-25) — one API across Android/iOS/macOS/
+Windows/Linux/Web; use it when a bench tool must also run in Chrome.
+
+Rules that save you a week each:
+
+- Always scan with a service-UUID filter (\`withServices\`). Unfiltered scans
+  are slow on Android, throttled in iOS background, and return the neighbor's
+  earbuds.
+- Request MTU 512 right after connect (Android; iOS negotiates itself). Then
+  use write-without-response + chunking for throughput.
+- Bound every scan (10–15 s) and surface "not found" UX. Endless spinners are
+  how BLE apps get 2-star reviews.
+- Permissions and background behavior are half the work — see
+  \`mobile-permissions-background\`.
+
+## Direct WiFi/LAN — same network, big payloads
+
+The device runs the server (ESP-IDF \`esp_http_server\` does HTTP + WebSocket).
+The app is a plain client:
+
+- Streams: \`web_socket_channel\` 3.0.3 (2025-04, Dart team). REST: your
+  existing \`dio\`.
+- Discovery: **\`bonsoir\` 7.1.4** (2026-06-17) for mDNS/Bonjour — it rides the
+  platform NSD/Bonjour stacks and handles the Android multicast lock. The
+  Flutter-team \`multicast_dns\` 0.3.3+1 (2026-06) is a pure-Dart resolver:
+  fine on desktop, more papercuts on mobile. Advertise \`_rec-grill._tcp\`
+  from the ESP32 \`mdns\` component and filter on it.
+- iOS shows the **local-network privacy prompt** on first mDNS/LAN traffic —
+  Info.plist keys required, no API to query the state. Details in
+  \`mobile-permissions-background\`.
+- Reading the current SSID: \`network_info_plus\` 8.2.0 (2026-06-26), which
+  needs precise-location permission on both platforms. Scanning for SSIDs:
+  \`wifi_scan\` 0.4.1+2 — last publish 2025-02, ~16 months ago: inside the
+  18-month window but on the watchlist; re-check before adopting.
+
+## MQTT via broker — fleet telemetry and control
+
+**Pick: \`mqtt_client\` 10.11.11** (2026-04-18). The only pure-Dart client with
+sustained maintenance; TLS, WS transport, MQTT 3.1.1 (its sibling \`mqtt5_client\`
+exists if the broker path needs v5 features).
+
+\`\`\`dart
+final client = MqttServerClient.withPort(broker, appClientId, 8883)
+  ..secure = true
+  ..keepAlivePeriod = 45
+  ..autoReconnect = true
+  ..resubscribeOnAutoReconnect = true;
+
+// Initial connect is on you — autoReconnect only covers drops.
+var delay = const Duration(seconds: 1);
+while (true) {
+  try {
+    await client.connect(user, pass);
+    break;
+  } on Exception {
+    // Exponential backoff, capped, with ±20% jitter — a fleet reconnecting
+    // in lockstep after a broker restart is a self-inflicted DDoS.
+    await Future<void>.delayed(delay * (0.8 + Random().nextDouble() * 0.4));
+    delay = delay * 2 > const Duration(seconds: 60)
+        ? const Duration(seconds: 60)
+        : delay * 2;
+  }
+}
+\`\`\`
+
+- **LWT lives in firmware, not the app**: the device connects with a will of
+  \`.../stat/online = 0\` (retained). It publishes \`1\` retained on connect. The
+  app just subscribes and always sees truthful presence — even for crashes.
+- **QoS**: telemetry stream → QoS 0 (loss-tolerant, cheapest); commands and
+  status → QoS 1 with idempotent handlers and a sequence number for dedupe.
+  QoS 2 is almost never worth it — double round-trips, patchy bridge support;
+  design idempotent instead.
+- Topic shape that has aged well: \`rec/{site}/{deviceId}/tele|cmd|stat/...\`
+  with retained \`stat\` topics so a fresh subscriber renders instantly.
+
+## USB serial — bench tools
+
+- **\`usb_serial\` is abandoned**: 0.5.2 published 2024-07-12 — ~24 months
+  silent, past the 18-month line. Do not start new tools on it.
+- **Pick: desktop build + \`flutter_libserialport\` 0.6.0** (2025-08-01),
+  Windows/macOS/Linux. Bench tools live next to a bench PC anyway.
+- Android USB-host wrappers are all stale (usb_serial_for_android 2022,
+  quick_usb 2022, flutter_serial_communication 2024-12). If you truly need
+  Android USB host, write a thin platform channel over mik3y's
+  usb-serial-for-android Java library (actively maintained) — ~200 lines you
+  own beats a dead dependency.
+- Live serial dashboards: \`fl_chart\` 1.2.0 (2026-03-13) handles 10 Hz updates
+  fine if you cap the point window and disable animations.
+
+## ESP32 realities
+
+**BLE + WiFi coexistence**: one 2.4 GHz radio, time-sliced by the coex
+scheduler. BLE-only GATT throughput on ESP32 is ~40–90 KB/s best case with
+write-without-response; with WiFi active expect **single-digit KB/s**,
+stretched connection intervals, and 100–300 ms WiFi latency spikes. Rules:
+bulk transfers (log pulls, OTA staging) go over WiFi/HTTP, never BLE, whenever
+both are up; drop BLE after provisioning unless it is the designed local
+fallback; single-core parts (C3) suffer worse — there's no spare core for the
+stacks.
+
+**SoftAP provisioning flow** (the non-BLE option):
+
+1. Unprovisioned device boots an AP \`REC-GRILL-XXXX\` (last MAC bytes) and
+   serves HTTP on 192.168.4.1.
+2. App shows join instructions. iOS cannot programmatically join an SSID from
+   Flutter; Android can via \`WifiNetworkSpecifier\` but plugin support is thin
+   — design the "open Settings, join, come back" path as the primary UX.
+3. App POSTs \`{ssid, psk}\` to \`/provision\`; device replies with a one-time
+   proof-of-possession token.
+4. Device drops the AP and joins the home network.
+5. App rediscovers it via mDNS (\`bonsoir\`) and confirms identity with the
+   token.
+6. Handoff to MQTT registration.
+
+BLE provisioning skips the network-switch dance entirely, which is why it's
+the better UX on iOS — the appliance class provisions over BLE even though it
+lives on MQTT. Message formats for all of the above belong to
+\`firmware-app-protocol-contracts\`.
+`,
+  },
+
+  // ── 11. Firmware/app protocol contracts ───────────────────────────────
+  {
+    id: "firmware-app-protocol-contracts",
+    title: "Firmware ↔ App Protocol Contracts",
+    topic: "Device Integration",
+    summary:
+      "Contract-first discipline between firmware and companion app: one schema as the single source of truth living in the firmware repo (nanopb+protobuf, packed structs with a written contract, or JSON envelopes over MQTT — picked by link and RAM budget), a versioned envelope with capability negotiation, tolerant decoding so unknown bytes never crash the app, the field-reality rule that the app must support every firmware version alive across OTA tiers, and golden payload fixtures tested in both CIs. With a Dart sealed-class envelope decoder.",
+    tags: [
+      "protocol", "protobuf", "nanopb", "contract", "versioning", "envelope",
+      "capability", "ota", "fixtures", "sealed class", "firmware", "decoding",
+    ],
+    asOf: "2026-07",
+    content: `# Firmware ↔ App Protocol Contracts
+
+A companion app and its firmware are one distributed system whose halves ship
+on different schedules through different stores. The contract between them is
+**bytes on a wire**, and every field-debugging horror story starts with two
+repos each holding their own slightly different idea of those bytes.
+
+## One source of truth — and it lives in the firmware repo
+
+The firmware repo owns \`/contract\`:
+
+\`\`\`text
+firmware/
+  contract/
+    proto/telemetry.proto      # or structs.h for packed-struct protocols
+    PROTOCOL.md                # envelope, framing, version matrix, examples
+    fixtures/                  # golden payloads (see below)
+\`\`\`
+
+Firmware owns it because firmware moves slower and hurts more when wrong: an
+app hotfix ships in a day, a fleet OTA takes weeks to fully land. The app
+consumes the contract — as a git dependency in \`pubspec.yaml\` pointing at the
+firmware repo (or a submodule), with Dart codegen run in CI so drift is a
+build failure, not a runtime surprise. House rule: **any firmware PR touching
+\`/contract\` requires an app-side reviewer**. No exceptions; this rule is the
+whole mechanism.
+
+## Schema options — pick by link and RAM budget
+
+| Option | Micro side | App side | When |
+|---|---|---|---|
+| Protobuf | nanopb (static alloc, ~10 KB flash) | \`protobuf\` 6.0.0 + \`protoc_plugin\` 25.0.0 (both 2025-11, verified 2026-07) | Default for anything with more than a couple message types or a multi-year life. ESP32/RP2040 class. |
+| Packed structs | Shared C header, \`__attribute__((packed))\`, explicit little-endian | Hand decoder over \`ByteData\` + the PROTOCOL.md field table | PIC18-class RAM, or ultra-hot paths (BLE notify at 10 Hz). The markdown doc IS the contract — review it like code. |
+| JSON + envelope | cJSON / ArduinoJson | \`dart:convert\` | MQTT telemetry where humans read topics with \`mosquitto_sub\`. Never over BLE — MTU waste. |
+
+Notes: \`protobuf\` 6.0.0 is a major (Nov 2025) — regenerate with the matching
+\`protoc_plugin\` 25.0.0; don't mix 5.x-generated Dart with the 6.x runtime.
+For packed structs: version byte first, fixed sizes, no bitfields across the
+wire, no compiler-dependent padding — and a \`static_assert(sizeof(...))\` in
+firmware CI so the struct can't silently grow.
+
+## The versioned envelope
+
+Every message, regardless of encoding, travels inside the same frame. Binary
+form: \`[ver u8][type u8][seq u16][len u16][payload][crc16]\`. JSON form over
+MQTT: \`{"v": 1, "t": "tele", "seq": 1042, "fw": "2.4.1", "d": {...}}\`. The
+envelope never changes shape; only payloads evolve. That means the app can
+always at least *parse the frame* of a firmware it has never met.
+
+## Capability negotiation, not version sniffing
+
+On connect (BLE handshake characteristic, or a retained MQTT \`stat/caps\`
+topic), the device reports its firmware semver **and a capability bitset**
+(\`hasPidTuning\`, \`hasDualProbe\`, ...). The app gates UI off capabilities.
+Version comparisons (\`fw >= 2.3\`) rot the first time a fix gets backported;
+capability bits are one \`uint32\` and never lie.
+
+## Tolerant decoding — bytes must never crash the app
+
+- Unknown envelope \`type\` → count it, log it, drop it. Never throw.
+- Unknown enum value → decode to an explicit \`unknown\` variant and render it
+  as such ("Mode: unknown (7)"), don't crash and don't silently pick a default.
+- Extra fields → ignored. Protobuf gives you this for free; for JSON, device
+  payload models must not be strict/exhaustive.
+- Short payload with an older version byte → decode the older layout; short
+  payload with the *current* version byte → corrupt, drop it.
+- No \`!\` and no bare \`as\` between radio bytes and UI state. Ever.
+
+## The field-reality rule
+
+OTA tiers mean **Alpha, Beta, and Production firmware are all alive at once**
+— plus every unit that hasn't updated since it left the bench. The app in the
+store must support every firmware version currently reporting in. Keep the
+support matrix in PROTOCOL.md (fw version → envelope ver → capabilities), and
+drop support for a version only when fleet telemetry shows it extinct — not
+when the release notes say it should be.
+
+## Golden payload fixtures — tested on BOTH sides
+
+\`/contract/fixtures/\` holds real captured frames as hex plus their expected
+decoded values. Firmware CI encodes and byte-compares; app CI decodes those
+same bytes and value-compares. A contract change that forgets either side is
+now a red build instead of a field incident.
+
+\`\`\`dart
+test('golden: telemetry v1 frame decodes', () {
+  final bytes = hexFixture('tele_v1_dual_probe.hex');
+  final msg = DeviceMessage.decode(bytes) as TelemetryMsg;
+  expect(msg.grillTempC, closeTo(121.5, 0.01));
+  expect(msg.probe2TempC, isNotNull);
+});
+\`\`\`
+
+## Dart sealed-class envelope decoder
+
+\`\`\`dart
+sealed class DeviceMessage {
+  const DeviceMessage();
+
+  static DeviceMessage decode(Uint8List frame) {
+    if (frame.length < 6) return MalformedMsg(frame, 'short frame');
+    final b = ByteData.sublistView(frame);
+    final ver = b.getUint8(0);
+    final type = b.getUint8(1);
+    final seq = b.getUint16(2, Endian.little);
+    final len = b.getUint16(4, Endian.little);
+    if (ver > kMaxEnvelopeVersion) return MalformedMsg(frame, 'envelope v\$ver');
+    if (frame.length < 6 + len + 2) return MalformedMsg(frame, 'truncated');
+    final payload = Uint8List.sublistView(frame, 6, 6 + len);
+    if (crc16(frame, 0, 6 + len) != b.getUint16(6 + len, Endian.little)) {
+      return MalformedMsg(frame, 'crc');
+    }
+    try {
+      return switch (type) {
+        0x01 => TelemetryMsg.fromBytes(payload, ver: ver, seq: seq),
+        0x02 => StatusMsg.fromBytes(payload, ver: ver, seq: seq),
+        0x03 => AckMsg.fromBytes(payload, ver: ver, seq: seq),
+        _ => UnknownMsg(type: type, seq: seq, payload: payload),
+      };
+    } on FormatException catch (e) {
+      return MalformedMsg(frame, e.message);
+    }
+  }
+}
+
+final class TelemetryMsg extends DeviceMessage { /* fields + fromBytes */ }
+final class StatusMsg extends DeviceMessage { /* ... */ }
+final class AckMsg extends DeviceMessage { /* ... */ }
+
+final class UnknownMsg extends DeviceMessage {
+  const UnknownMsg({required this.type, required this.seq, required this.payload});
+  final int type; final int seq; final Uint8List payload;
+}
+
+final class MalformedMsg extends DeviceMessage {
+  const MalformedMsg(this.raw, this.reason);
+  final Uint8List raw; final String reason;
+}
+\`\`\`
+
+The consumer \`switch\` is exhaustive by construction — a new message type is a
+compile error everywhere it must be handled, and \`UnknownMsg\`/\`MalformedMsg\`
+force the "firmware newer than app" path to exist in the UI instead of in a
+crash reporter.
+`,
+  },
+
+  // ── 12. Permissions & background execution ────────────────────────────
+  {
+    id: "mobile-permissions-background",
+    title: "Permissions & Background Execution for Device Apps",
+    topic: "Device Integration",
+    summary:
+      "The permission and background-execution matrix that breaks device companion apps: Android's BLUETOOTH_SCAN/CONNECT (and the location-for-scan legacy), foreground service types and Doze; iOS's bluetooth-central background mode, state restoration, the ~10-second background budget, and the local-network privacy prompt for LAN/mDNS. permission_handler flow patterns (request-in-context, rationale, permanently-denied recovery), plus the honest table of what actually runs in background per platform — and why MQTT alerting must go broker→FCM/APNs instead of holding sockets.",
+    tags: [
+      "permissions", "background", "android", "ios", "bluetooth", "doze",
+      "foreground service", "permission_handler", "fcm", "apns", "local network",
+    ],
+    asOf: "2026-07",
+    content: `# Permissions & Background Execution for Device Apps
+
+Half the engineering in a device companion app is not the protocol — it's
+convincing two mobile OSes to let you use the radio, and knowing exactly when
+they'll stop letting you. Get this wrong and the app "randomly" loses the
+grill mid-cook. Nothing below is random.
+
+## Android permissions
+
+API 31+ (the only targets you can ship in 2026):
+
+\`\`\`xml
+<uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+    android:usesPermissionFlags="neverForLocation" />
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+<!-- Legacy: scanning on API <= 30 required location, because BLE beacons
+     ARE location. Keep these fenced with maxSdkVersion. -->
+<uses-permission android:name="android.permission.BLUETOOTH"
+    android:maxSdkVersion="30" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
+    android:maxSdkVersion="30" />
+\`\`\`
+
+- \`neverForLocation\` is what frees you from the location prompt on 31+ — but
+  it strips beacon-derived location from results. If you *do* infer position
+  from beacons, drop the flag and keep fine location.
+- Reading the current SSID (\`network_info_plus\`) requires fine location +
+  precise, granted at runtime, on every modern API level. Users find this
+  bizarre; explain it in the rationale dialog.
+- mDNS discovery wants \`CHANGE_WIFI_MULTICAST_STATE\` (bonsoir declares it).
+
+**Foreground services** are how anything survives the background on Android.
+Since Android 14 the type is mandatory, declared and started: use
+\`connectedDevice\` for a live BLE/serial session, \`dataSync\` for transfers.
+User-visible notification required — make it useful (live temp, not "app is
+running"). **Doze**: after the screen has been off a while, network is
+deferred and jobs are batched; an active FGS with \`connectedDevice\` keeps the
+BLE link and its traffic alive through it. OEM battery managers (Samsung,
+Xiaomi) kill even that — link users to the dontkillmyapp instructions from a
+help screen rather than pretending it doesn't happen.
+
+## iOS permissions and background
+
+Info.plist, all of it:
+
+\`\`\`xml
+<key>NSBluetoothAlwaysUsageDescription</key>
+<string>Connects to your REC controller to monitor and control it.</string>
+<key>UIBackgroundModes</key>
+<array><string>bluetooth-central</string></array>
+<key>NSLocalNetworkUsageDescription</key>
+<string>Finds REC devices on your home network.</string>
+<key>NSBonjourServices</key>
+<array><string>_rec-grill._tcp</string></array>
+\`\`\`
+
+- The Bluetooth prompt fires when the first \`CBCentralManager\` is created —
+  so construct the BLE layer lazily, on the "Add device" tap, not at startup.
+- **\`bluetooth-central\` background mode** buys: while connected, notify/read/
+  write events wake the app briefly in background; pending connect requests
+  survive indefinitely (queue a connect and iOS completes it when the device
+  appears — this is the reconnect mechanism, use it). Background *scanning*
+  is heavily throttled and requires explicit service UUIDs — think minutes,
+  not seconds, to discover.
+- **State restoration**: opt-in via a restore identifier; iOS relaunches a
+  terminated app for BLE events. \`flutter_blue_plus\` exposes
+  \`FlutterBluePlus.setOptions(restoreState: true)\`, but the relaunch events
+  land before the Dart engine is up — treat restoration as a "reconnect
+  nudge", not a seamless resume.
+- **The ~10-second budget**: once backgrounded without an exempting mode,
+  you get on the order of ten seconds (stretchable via
+  \`beginBackgroundTask\`, not far) to flush writes and close sockets. The
+  iOS 18/19 era changed none of the rules here — budgets stayed tight, and no
+  new BLE background entitlement appeared. Design to checkpoint on
+  \`AppLifecycleState.paused\`, always.
+- **Local network prompt**: first LAN unicast or mDNS query triggers it, once,
+  system-wide per app. There is still no API to query or re-request it —
+  detect denial heuristically (mDNS silence + direct-IP connect timeout while
+  on WiFi) and deep-link users to Settings › Privacy › Local Network.
+
+## permission_handler flow (12.0.3, verified 2026-07)
+
+Request **in context** — on the "Add device" tap, never at launch:
+
+\`\`\`dart
+Future<bool> ensureBlePermissions(BuildContext context) async {
+  final perms = [Permission.bluetoothScan, Permission.bluetoothConnect];
+  // On API <= 30 / iOS, permission_handler maps these to the right legacy
+  // permissions itself — request the modern set unconditionally.
+  final statuses = await perms.request();
+  if (statuses.values.every((s) => s.isGranted)) return true;
+  if (statuses.values.any((s) => s.isPermanentlyDenied)) {
+    final go = await showRecoveryDialog(context); // explain, offer Settings
+    if (go) await openAppSettings();              // user flips it manually
+    return false;
+  }
+  return false; // denied-but-askable: keep the feature visible, re-ask on
+                // next explicit user attempt with a one-line rationale first.
+}
+\`\`\`
+
+The three states to handle every time: granted; denied-but-askable (show the
+one-sentence why, ask again on the next user-initiated attempt); permanently
+denied (Android "don't ask again" / iOS any denial → only \`openAppSettings()\`
+can fix it — say so plainly). Never loop requests; two refusals means build
+the degraded path.
+
+## What actually works in background — design table
+
+| Need | Android | iOS | Verdict |
+|---|---|---|---|
+| Hold BLE connection, receive notifies | Yes — FGS \`connectedDevice\`, indefinitely | Yes — \`bluetooth-central\`, incl. relaunch-on-event | Rely on it |
+| Background scan for device to appear | Yes — FGS, normal speed | Throttled, UUID-filtered, slow | Design for minutes on iOS; prefer queued connects |
+| Hold an MQTT/TCP socket | Yes — FGS \`dataSync\` (battery + Play-review scrutiny) | **No** — suspended ~10 s after backgrounding | Do not architect around app-held sockets |
+| Periodic telemetry pull | WorkManager, 15-min floor | BGAppRefresh, timing unreliable | Push, don't pull |
+| Long OTA/file transfer | FGS \`dataSync\` | Background \`URLSession\` (HTTP only, native-side) | Keep transfers foreground or HTTP-native |
+
+**The punchline for MQTT fleets**: on iOS the *broker* is your background
+executor. Device publishes an alarm → broker rule (Firebase function /
+ClearBlade trigger) → FCM/APNs push → user taps → app foregrounds, reconnects,
+and reconciles state from retained \`stat\` topics. The app holding a socket
+open "so we get alarms" works on the bench, on Android, with the screen on —
+and nowhere else. Build the push path first; it's also the one that works
+when the app is killed entirely.
+`,
+  },
 ];

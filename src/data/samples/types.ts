@@ -11,7 +11,8 @@ export type SampleCategory =
   | "navigation"     // go_router: shell routes, guards, deep links
   | "performance"    // jank hunting, rebuild control, memory
   | "testing"        // widget, golden, integration, fakes
-  | "ui-patterns";   // overlays, custom layout, gestures, theming
+  | "ui-patterns"    // overlays, custom layout, gestures, theming
+  | "connectivity";  // BLE, MQTT, provisioning, serial, firmware<->app protocols
 
 export const sampleCategories: readonly SampleCategory[] = [
   "rendering",
@@ -23,6 +24,7 @@ export const sampleCategories: readonly SampleCategory[] = [
   "performance",
   "testing",
   "ui-patterns",
+  "connectivity",
 ];
 
 export interface PackageDep {

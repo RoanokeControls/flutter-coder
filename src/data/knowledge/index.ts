@@ -8,6 +8,11 @@ export function getKnowledge(id: string): KnowledgeEntry | undefined {
   return knowledgeEntries.find((e) => e.id === id);
 }
 
+/** Word-boundary prefix match: "ble" hits "ble"/"bluetooth" tags, never "serializable". */
+function termHits(term: string, haystack: string): boolean {
+  return new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(haystack);
+}
+
 export function findKnowledge(query: string, limit = 3): KnowledgeEntry[] {
   const terms = query.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2);
   const scored = knowledgeEntries.map((e) => {
@@ -15,8 +20,8 @@ export function findKnowledge(query: string, limit = 3): KnowledgeEntry[] {
     const weak = `${e.summary}`.toLowerCase();
     let score = 0;
     for (const term of terms) {
-      if (strong.includes(term)) score += 3;
-      else if (weak.includes(term)) score += 1;
+      if (termHits(term, strong)) score += 3;
+      else if (termHits(term, weak)) score += 1;
     }
     return { entry: e, score };
   });

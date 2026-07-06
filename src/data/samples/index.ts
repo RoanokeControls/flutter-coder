@@ -10,6 +10,8 @@ import { navigationSamples } from "./navigation.js";
 import { performanceSamples } from "./performance.js";
 import { testingSamples } from "./testing.js";
 import { uiPatternSamples } from "./ui-patterns.js";
+import { connectivitySamples } from "./connectivity.js";
+import { deviceLinkSamples } from "./device-link.js";
 
 export type { FlutterSample, SampleCategory } from "./types.js";
 export { sampleCategories } from "./types.js";
@@ -23,6 +25,8 @@ export const allSamples: readonly FlutterSample[] = [
   ...performanceSamples,
   ...testingSamples,
   ...uiPatternSamples,
+  ...connectivitySamples,
+  ...deviceLinkSamples,
 ];
 
 export function getSample(id: string): FlutterSample | undefined {
@@ -33,6 +37,11 @@ export function listSamples(category?: SampleCategory): readonly FlutterSample[]
   return category ? allSamples.filter((s) => s.category === category) : allSamples;
 }
 
+/** Word-boundary prefix match: "ble" hits "ble"/"ble-session", never "serializable". */
+function termHits(term: string, haystack: string): boolean {
+  return new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(haystack);
+}
+
 /** Rank samples against a free-text need description. */
 export function findSamples(query: string, limit = 5): FlutterSample[] {
   const terms = query.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2);
@@ -41,8 +50,8 @@ export function findSamples(query: string, limit = 5): FlutterSample[] {
     const haystackWeak = `${s.description} ${s.category}`.toLowerCase();
     let score = 0;
     for (const term of terms) {
-      if (haystackStrong.includes(term)) score += 3;
-      else if (haystackWeak.includes(term)) score += 1;
+      if (termHits(term, haystackStrong)) score += 3;
+      else if (termHits(term, haystackWeak)) score += 1;
     }
     return { sample: s, score };
   });

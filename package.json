@@ -1,6 +1,6 @@
 {
   "name": "flutter-coder-mcp",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Flutter/Dart MCP server: live API doc lookups, pub.dev package data, curated widget/error catalogs, Dart language reference, code generation, and a verified advanced-sample + knowledge corpus for building Flutter apps.",
   "type": "module",
   "main": "dist/index.js",

@@ -21,7 +21,19 @@
     "mocktail": "1.0.5",
     "flutter_secure_storage": "10.3.1",
     "intl": "0.20.3",
-    "ffi": "2.2.0"
+    "ffi": "2.2.0",
+    "flutter_blue_plus": "2.3.10",
+    "universal_ble": "2.1.0",
+    "mqtt_client": "10.11.11",
+    "fl_chart": "1.2.0",
+    "flutter_libserialport": "0.6.0",
+    "web_socket_channel": "3.0.3",
+    "permission_handler": "12.0.3",
+    "protobuf": "6.0.0",
+    "protoc_plugin": "25.0.0",
+    "bonsoir": "7.1.4",
+    "network_info_plus": "8.2.0",
+    "wifi_scan": "0.4.1+2"
   },
   "lastChecked": "2026-07-06T00:00:00.000Z"
 }
