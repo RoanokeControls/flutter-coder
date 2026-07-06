@@ -1054,4 +1054,267 @@ class _HarnessState extends State<_Harness> {
     notes:
       "Package choice: flutter_libserialport (FFI over libserialport; Windows/macOS/Linux/Android) over usb_serial, which is Android-only and has not shipped a release since mid-2024 -- a bench console wants desktop. Platform setup: on macOS the Flutter template's App Sandbox blocks serial devices, so relax the entitlements (or disable the sandbox for an internal tool); on Linux add yourself to dialout; Android needs USB-host/OTG. The libserialport traps: port config must be applied AFTER opening (it writes termios to the live fd -- configure a closed port and you silently stay at 9600 8N1), and SerialPortConfig is malloc'd in C, so dispose() it or leak. Flow control OFF is load-bearing on dev boards: DTR/RTS drive the EN/IO0 auto-reset circuit on ESP32 boards (and RUN/BOOTSEL analogues elsewhere), so a driver toggling handshake lines resets the target or drops it into the ROM bootloader the moment you open the port. Unplugging surfaces as a SerialPortError on the reader's stream (onError/onDone), not as an exception at a call site -- tear down reader-first (closing the port under a mid-read reader can hard-crash on macOS), then re-enumerate; never reuse the stale port name. The framer splits on LF and trims a trailing CR so CR-LF and bare-LF firmware both work even when the pair straddles two USB chunks -- unit tested, including malformed UTF-8 from wrong-baud bootloader chatter (decoded with allowMalformed so the console never dies). The console history is a ListQueue: O(1) eviction matters at full-rate 115200 baud spam. flutter analyze on Flutter 3.44.4 / flutter_libserialport 0.6.0: zero issues.",
   },
+  {
+    id: "ble-device-session-reactive",
+    title: "BLE Device Session on flutter_reactive_ble: Connection-as-Subscription State Machine with Reconnect, Notify, and Write-With-Response",
+    category: "connectivity",
+    difficulty: "expert",
+    description:
+      "The commercial-default variant of ble-device-session: the identical sealed-state session architecture -- filtered scan, connect with timeout, notify subscription for telemetry, write-with-response command path, capped exponential-backoff reconnect, and adapter-state (off/unauthorized/location-services) handling with an MTU request after connect -- ported from flutter_blue_plus to flutter_reactive_ble (BSD-3-Clause, from the Philips Hue team at Signify, free for commercial use), the REC default since flutter_blue_plus 2.x went paid for commercial apps. The library's defining difference is embraced rather than hidden: connectToDevice() returns a stream and the connection lives exactly as long as its subscription, so the whole reconnect machine is subscription lifecycle management. Reach for this one by default; the fbp variant remains for teams holding a paid fbp commercial license.",
+    tags: ["ble", "bluetooth", "flutter_reactive_ble", "reactive-ble", "gatt", "scan-filter", "sealed-class", "state-machine", "reconnect", "exponential-backoff", "session", "connection-as-subscription", "mtu", "notify", "write-with-response", "commercial", "license", "bsd", "esp32", "nimble"],
+    minFlutter: "3.10",
+    packages: [{ name: "flutter_reactive_ble", version: "^5.5.0" }],
+    code: `// BLE device session on flutter_reactive_ble (BSD-3-Clause): the sealed
+// state machine of the flutter_blue_plus variant, ported to a library where
+// a connection is not an object you hold but a stream you stay subscribed
+// to -- cancelling IS the disconnect, so reconnect = subscription lifecycle.
+import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
+
+// Nordic-UART-style custom service. The firmware must put this 128-bit UUID
+// in the *advertising PDU*, not only the scan response: iOS matches filters
+// against the advertisement, so a scan-response-only UUID is invisible.
+final Uuid kServiceUuid = Uuid.parse('6e400001-b5a3-f393-e0a9-e50e24dcca9e');
+final Uuid kCommandUuid = Uuid.parse('6e400002-b5a3-f393-e0a9-e50e24dcca9e'); // write
+final Uuid kTelemetryUuid = Uuid.parse('6e400003-b5a3-f393-e0a9-e50e24dcca9e'); // notify
+
+sealed class SessionState { const SessionState(); }
+class SessionIdle extends SessionState { const SessionIdle(); }
+class SessionScanning extends SessionState { const SessionScanning(); }
+class SessionConnecting extends SessionState { const SessionConnecting(this.attempt); final int attempt; }
+class SessionReady extends SessionState { const SessionReady(this.mtu); final int mtu; }
+class SessionReconnecting extends SessionState {
+  const SessionReconnecting(this.attempt, this.delay);
+  final int attempt; final Duration delay;
+}
+class SessionFailed extends SessionState { const SessionFailed(this.reason); final String reason; }
+/// BleStatus separates \`unauthorized\` (permissions) from \`poweredOff\` (radio)
+/// from \`locationServicesDisabled\` (Android) -- the state carries which.
+class SessionAdapterUnavailable extends SessionState {
+  const SessionAdapterUnavailable(this.status); final BleStatus status;
+}
+
+class DeviceSession {
+  static const _maxAttempts = 6;
+
+  final _ble = FlutterReactiveBle(); // factory returns a shared singleton
+
+  final state = ValueNotifier<SessionState>(const SessionIdle());
+  final _telemetry = StreamController<List<int>>.broadcast();
+  Stream<List<int>> get telemetry => _telemetry.stream;
+
+  String? _deviceId;
+  QualifiedCharacteristic? _command;
+  StreamSubscription<ConnectionStateUpdate>? _connSub;
+  StreamSubscription<List<int>>? _notifySub;
+  int _attempt = 0; Timer? _retryTimer;
+  bool _closing = false; // suppresses reconnect during intentional teardown
+
+  Future<void> start() async {
+    // statusStream opens with \`unknown\` while the platform side spins up;
+    // wait for a verdict before touching the radio.
+    final status = await _ble.statusStream.firstWhere((s) => s != BleStatus.unknown);
+    if (status != BleStatus.ready) {
+      state.value = SessionAdapterUnavailable(status); return;
+    }
+    await _scan();
+  }
+
+  Future<void> _scan() async {
+    state.value = const SessionScanning();
+    // There is no stopScan(): the stream IS the scan; cancelling idles the
+    // radio. The Completer keeps that cancel deterministic on every path.
+    final found = Completer<DiscoveredDevice>();
+    final scanSub = _ble.scanForDevices(withServices: [kServiceUuid]).listen(
+      (device) { if (!found.isCompleted) found.complete(device); },
+      // Android reports "location services disabled" as a scan error here.
+      onError: (Object e) { if (!found.isCompleted) found.completeError(e); },
+    );
+    try {
+      _deviceId = (await found.future.timeout(const Duration(seconds: 10))).id;
+    } on TimeoutException {
+      state.value = const SessionFailed('no advertising device found'); return;
+    } catch (e) {
+      state.value = SessionFailed('scan failed: $e'); return;
+    } finally {
+      await scanSub.cancel(); // radio idle before connecting (GATT-133 trap)
+    }
+    _connect();
+  }
+
+  void _connect() {
+    final id = _deviceId;
+    if (id == null || _closing) return;
+    if (_ble.status != BleStatus.ready) {
+      state.value = SessionAdapterUnavailable(_ble.status); return;
+    }
+    _attempt++;
+    state.value = SessionConnecting(_attempt);
+    // THE connection is this subscription. It lives exactly as long as the
+    // listener does: cancel = disconnect, and a second listen() is a second,
+    // independent connection attempt -- never double-listen.
+    _connSub = _ble.connectToDevice(
+      id: id,
+      // Always pass a timeout: without one, Android sets autoConnect on
+      // connectGatt() and a first-time connect can pend forever. The timeout
+      // is delivered as a TimeoutException *on this stream*, not thrown.
+      connectionTimeout: const Duration(seconds: 15),
+    ).listen((update) {
+      switch (update.connectionState) {
+        case DeviceConnectionState.connected:
+          if (state.value is! SessionReady) _onConnected(id);
+        case DeviceConnectionState.disconnected:
+          _scheduleReconnect(update.failure?.message ?? 'link lost');
+        case DeviceConnectionState.connecting || DeviceConnectionState.disconnecting:
+          break; // transitional; the sealed state already says "connecting"
+      }
+    }, onError: (Object e) => _scheduleReconnect('connect: $e'));
+  }
+
+  Future<void> _onConnected(String id) async {
+    try {
+      // Two-step 5.x discovery idiom (discoverServices() is deprecated):
+      // run discovery, then read the results. Rediscover after EVERY
+      // reconnect -- Service objects are invalidated on disconnect.
+      await _ble.discoverAllServices(id);
+      final services = await _ble.getDiscoveredServices(id);
+      if (!services.any((s) => s.id == kServiceUuid)) {
+        throw StateError('service missing on device');
+      }
+      // requestMtu returns the NEGOTIATED value: Android actually asks; iOS
+      // ignores the ask (CoreBluetooth self-negotiated at connect) and just
+      // reports the current value. Trust the return -- NimBLE ships 256.
+      final mtu = await _ble.requestMtu(deviceId: id, mtu: 247);
+      if (Platform.isAndroid) {
+        // Android-only knob; on iOS it always completes with an error.
+        await _ble.requestConnectionPriority(
+            deviceId: id, priority: ConnectionPriority.highPerformance);
+      }
+      // Addressing is a (device, service, characteristic) UUID triple: no
+      // handles to cache, and a missing characteristic errors on resolve.
+      _command = QualifiedCharacteristic(
+          deviceId: id, serviceId: kServiceUuid, characteristicId: kCommandUuid);
+      await _notifySub?.cancel();
+      _notifySub = _ble
+          .subscribeToCharacteristic(QualifiedCharacteristic(
+              deviceId: id, serviceId: kServiceUuid, characteristicId: kTelemetryUuid))
+          .listen(_telemetry.add,
+              // Self-terminates on disconnect; the connection stream above
+              // drives reconnect, so only log here.
+              onError: (Object e) => debugPrint('telemetry: $e'));
+      _attempt = 0;
+      state.value = SessionReady(mtu);
+    } catch (e) {
+      _scheduleReconnect('setup: $e');
+    }
+  }
+
+  void _scheduleReconnect(String cause) {
+    if (_closing || (_retryTimer?.isActive ?? false)) return;
+    // Cancel-then-relisten IS the reconnect. The old subscription must go
+    // first: while it lives the library still owns the (dead) connection,
+    // and re-listening beside it would stack a second attempt.
+    _connSub?.cancel(); _connSub = null;
+    _notifySub?.cancel(); _notifySub = null;
+    _command = null;
+    if (_attempt >= _maxAttempts) {
+      state.value = SessionFailed('gave up after $_maxAttempts tries: $cause');
+      return;
+    }
+    // Capped exponential backoff; _attempt is 0 after a healthy session
+    // dropped, so that retry is fast.
+    final delay = Duration(milliseconds: 500 * (1 << _attempt.clamp(0, 5)));
+    state.value = SessionReconnecting(_attempt + 1, delay);
+    _retryTimer = Timer(delay, _connect);
+  }
+
+  /// Write-with-response: completes only after the peripheral's ATT ack.
+  /// Payload must fit in the negotiated MTU minus 3 (ATT header).
+  Future<void> sendCommand(List<int> payload) async {
+    final c = _command;
+    if (state.value is! SessionReady || c == null) {
+      throw StateError('session not ready');
+    }
+    await _ble.writeCharacteristicWithResponse(c, value: payload);
+  }
+
+  Future<void> close() async {
+    _closing = true;
+    _retryTimer?.cancel();
+    await _notifySub?.cancel();
+    // This cancel IS the disconnect -- so the stream can never deliver its
+    // own \`disconnected\` update afterwards; synthesize the terminal state
+    // yourself (the official example injects a fake ConnectionStateUpdate).
+    await _connSub?.cancel();
+    await _telemetry.close();
+    state.value = const SessionIdle();
+  }
+}
+
+void main() => runApp(const _Harness());
+
+class _Harness extends StatefulWidget {
+  const _Harness();
+  @override
+  State<_Harness> createState() => _HarnessState();
+}
+
+class _HarnessState extends State<_Harness> {
+  final _session = DeviceSession();
+
+  @override
+  void dispose() { _session.close(); super.dispose(); }
+
+  String _describe(SessionState s) => switch (s) {
+        SessionIdle() => 'idle',
+        SessionAdapterUnavailable(:final status) => 'adapter: $status',
+        SessionScanning() => 'scanning for service...',
+        SessionConnecting(:final attempt) => 'connecting (attempt $attempt)',
+        SessionReady(:final mtu) => 'ready -- MTU $mtu (payload \${mtu - 3})',
+        SessionReconnecting(:final attempt, :final delay) => 'reconnect #$attempt in \${delay.inMilliseconds} ms',
+        SessionFailed(:final reason) => 'failed: $reason',
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        appBar: AppBar(title: const Text('BLE Device Session (reactive_ble)')),
+        body: Center(
+          child: ValueListenableBuilder<SessionState>(
+            valueListenable: _session.state,
+            builder: (context, s, _) => Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(_describe(s)),
+                StreamBuilder<List<int>>(
+                  stream: _session.telemetry,
+                  builder: (context, snap) => Text(snap.hasData ? 'last packet: \${snap.data!.length} B' : 'no telemetry yet'),
+                ),
+                FilledButton(
+                  onPressed: s is SessionIdle || s is SessionFailed ? _session.start : null,
+                  child: const Text('Connect'),
+                ),
+                TextButton(
+                  // Error sink: fire-and-forget writes race link drops.
+                  onPressed: s is SessionReady
+                      ? () => _session.sendCommand([0x01, 0x2A]).onError((e, _) => debugPrint('tx failed: $e'))
+                      : null,
+                  child: const Text('Send ping'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+`,
+    notes:
+      "Connection-as-subscription is the load-bearing semantic and the source of every classic reactive_ble bug: the stream returned by connectToDevice() IS the connection, so listening twice starts two independent connection attempts (never share or re-listen a live one), cancel-then-relisten is how this sample reconnects, and cancelling means the stream can never emit its own `disconnected` update -- after a deliberate cancel you must synthesize the terminal state yourself (the official Philips example injects a fake ConnectionStateUpdate; this sample assigns its sealed state directly). The connectionTimeout arrives as a TimeoutException ON the stream, not thrown from the call, and omitting it makes Android pass autoConnect to connectGatt(), where a first-time connect can pend forever. Discovery: discoverServices() is deprecated in 5.x -- use the two-step discoverAllServices() then getDiscoveredServices() idiom, rediscovering after EVERY reconnect because Service/Characteristic objects are invalidated on disconnect (connectToDevice's servicesWithCharacteristicsToDiscover map is an iOS-only partial-discovery fast path; Android ignores it). Everything else addresses by QualifiedCharacteristic UUID triple, so there are no cached-handle bugs. Scanning has no stopScan(): cancelling the scan subscription idles the radio, which is why the sample uses an explicit Completer -- stream.first.timeout() would leak a running scan. Android surfaces disabled location services both as BleStatus.locationServicesDisabled and as a scan-stream error (requireLocationServicesEnabled defaults to true). There is no bonding API at all: writing or subscribing to an encrypted characteristic triggers the Android auto-bond (and the iOS pairing prompt) implicitly. MTU: requestMtu() returns the negotiated value; on iOS the request is a no-op because CoreBluetooth self-negotiates at connect, so trust the return, never the ask. requestConnectionPriority() is Android-only and always completes with an error on iOS -- gate it on Platform.isAndroid. Platform support is mobile: Android and iOS (5.5.0 also registers a macOS plugin class, but Windows/Linux/web are out -- reach for universal_ble on desktop). Setup: Android 12+ needs BLUETOOTH_SCAN/BLUETOOTH_CONNECT, iOS needs NSBluetoothAlwaysUsageDescription; a missing grant parks the session in SessionAdapterUnavailable(BleStatus.unauthorized) rather than crashing. FlutterReactiveBle() is a factory returning a process-wide singleton -- construct once at the root, inject everywhere. Verified with flutter analyze on Flutter 3.44.4 / flutter_reactive_ble 5.5.0: zero issues.",
+  },
 ];

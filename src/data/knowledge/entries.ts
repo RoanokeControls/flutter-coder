@@ -1154,11 +1154,11 @@ dev_dependencies:
     title: "Device Connectivity Stack: BLE, LAN, MQTT, or Serial",
     topic: "Device Integration",
     summary:
-      "The 2026 decision guide for how a companion app talks to embedded hardware: BLE for battery/proximity/provisioning (flutter_blue_plus, verified), direct WiFi/LAN with mDNS discovery for big local payloads, MQTT via broker for fleet telemetry and control (mqtt_client reconnect/LWT/QoS patterns), and USB serial for bench tools (usb_serial is abandoned — desktop + flutter_libserialport instead). Includes a decision table by device class and the ESP32 realities: BLE+WiFi coexistence throughput collapse and the SoftAP provisioning dance.",
+      "The 2026 decision guide for how a companion app talks to embedded hardware: BLE for battery/proximity/provisioning (flutter_reactive_ble — BSD-licensed, free for commercial; flutter_blue_plus 2.x is dual-license/paid-commercial), direct WiFi/LAN with mDNS discovery for big local payloads, MQTT via broker for fleet telemetry and control (mqtt_client reconnect/LWT/QoS patterns), and USB serial for bench tools (usb_serial is abandoned — desktop + flutter_libserialport instead). Includes a decision table by device class and the ESP32 realities: BLE+WiFi coexistence throughput collapse and the SoftAP provisioning dance.",
     tags: [
       "ble", "bluetooth", "mqtt", "wifi", "mdns", "usb", "serial", "esp32",
-      "provisioning", "flutter_blue_plus", "mqtt_client", "telemetry",
-      "license", "licensing",
+      "provisioning", "flutter_reactive_ble", "flutter_blue_plus",
+      "mqtt_client", "telemetry", "license", "licensing",
     ],
     asOf: "2026-07",
     content: `# Device Connectivity Stack: BLE, LAN, MQTT, or Serial
@@ -1184,18 +1184,22 @@ UI never knows which link is live.
 
 ## BLE — battery, proximity, provisioning
 
-**Pick: \`flutter_blue_plus\` 2.3.10** (published 2026-06-30). It won 2025–26 on
-adoption — ~250k downloads/30d, roughly 4× the runner-up — which for a plugin
-wrapping two flaky platform stacks is the feature: every Android OEM quirk has
-an issue thread. **Licensing caveat (2.x): dual-license.** \`connect()\` now
-requires a \`license:\` argument — \`License.nonprofit\` is free, commercial use
-needs the paid tier (\`License.free\` is deprecated). For a commercial REC app,
-either budget the fbp commercial license or take the alternative below; decide
-per product, in writing, before the first \`connect()\` call ships.
-**Alternative: \`flutter_reactive_ble\` 5.5.0** (2026-05-22),
-Philips-maintained, MIT-licensed, stream-first API — the safer bet if your
-team prefers explicit connection-state streams over async calls, or when the
-fbp commercial license isn't justified. **Desktop/web:
+**Pick: \`flutter_reactive_ble\` 5.5.0** (published 2026-05-22). Philips
+Hue-maintained and shipped in their production consumer apps, BSD-3-Clause —
+free for commercial use, which is what REC apps are. Stream-first API: the
+connection lives as long as you listen to \`connectToDevice\`'s stream (cancel
+= disconnect), which maps cleanly onto a sealed-state session machine. Covers
+the full REC surface: filtered scan, multi-device, notify subscriptions,
+write with/without response, MTU negotiation, Android connection priority.
+Mobile-only — bench/desktop tools use \`universal_ble\` (below). No explicit
+bonding API: require encryption on the characteristic and Android auto-bonds,
+or do app-layer auth.
+**Alternative: \`flutter_blue_plus\` 2.3.10** (2026-06-30). Still the adoption
+leader (~250k downloads/30d, ~4×) and its issue tracker is an unmatched
+Android-OEM-quirk encyclopedia — but **2.x is dual-license**: \`connect()\`
+requires a \`license:\` argument, \`License.nonprofit\` is free, commercial use
+needs the paid tier. Only pick it when a product has already budgeted that
+license, in writing, before the first \`connect()\` ships. **Desktop/web:
 \`universal_ble\` 2.1.0** (2026-06-25) — one API across Android/iOS/macOS/
 Windows/Linux/Web; use it when a bench tool must also run in Chrome.
 
@@ -1210,6 +1214,24 @@ Rules that save you a week each:
   how BLE apps get 2-star reviews.
 - Permissions and background behavior are half the work — see
   \`mobile-permissions-background\`.
+
+reactive_ble idioms — verified against the official PhilipsHue example app
+(2026-07); full working code in sample \`ble-device-session-reactive\`:
+
+- **Disconnect must be synthesized.** Disconnecting = cancelling the
+  \`connectToDevice\` subscription — so the stream can never deliver its own
+  "disconnected" update. Emit a synthetic
+  \`ConnectionStateUpdate(..., DeviceConnectionState.disconnected)\` after
+  cancel (the official connector does this in a \`finally\`) or your session
+  state machine hangs on user-initiated disconnects.
+- Service discovery is two-step in 5.x: \`await discoverAllServices(id)\`
+  then \`getDiscoveredServices(id)\` → \`List<Service>\`.
+- One \`FlutterReactiveBle()\` instance at app root, injected everywhere —
+  never per-widget.
+- Scanner restart-safety: cancel the previous scan subscription before
+  re-listening; dedupe \`DiscoveredDevice\` by id with in-place replacement so
+  RSSI stays fresh.
+- \`readRssi(deviceId)\` is available for link-quality UX.
 
 ## Direct WiFi/LAN — same network, big payloads
 

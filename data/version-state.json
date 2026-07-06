@@ -33,7 +33,8 @@
     "protoc_plugin": "25.0.0",
     "bonsoir": "7.1.4",
     "network_info_plus": "8.2.0",
-    "wifi_scan": "0.4.1+2"
+    "wifi_scan": "0.4.1+2",
+    "flutter_reactive_ble": "5.5.0"
   },
   "lastChecked": "2026-07-06T00:00:00.000Z"
 }
