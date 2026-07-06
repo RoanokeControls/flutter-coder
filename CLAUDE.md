@@ -41,10 +41,13 @@ in them cite versions verified live against the pub.dev API on that date.
 
 ## Maintenance cadence
 
-A scheduled cloud routine ("flutter-coder update check") runs
-`scripts/check-updates.mjs` on the 1st of every month and opens a GitHub issue on
-this repo when Flutter stable moves, Dart gains a minor version, a tracked package
-ships a new major, or a recommended package goes stale (>18 months since publish).
+A scheduled cloud routine ("flutter-coder update check",
+https://claude.ai/code/routines/trig_01YPBFbMcvX1SVrdC1h1DMof) runs
+`scripts/check-updates.mjs --no-mark-seen` on the 1st of every month (12:00 UTC)
+and opens a GitHub issue on this repo when Flutter stable moves, Dart gains a
+minor version, a tracked package ships a new major, or a recommended package
+goes stale (>18 months since publish). The routine never commits — unresolved
+drift keeps alerting monthly until acted on.
 Acting on those issues is a human+Claude job, done locally:
 
 - Flutter/Dart moved → refresh `dart-features.ts` (new language features), re-verify
