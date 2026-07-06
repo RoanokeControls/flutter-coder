@@ -77,22 +77,21 @@ class CounterPage extends StatelessWidget {
   {
     name: "Riverpod",
     category: "State Management",
-    description: "Compile-safe, testable state management. No BuildContext dependency. Supports code generation with riverpod_generator.",
-    pros: ["Compile-safe (no runtime errors)", "No BuildContext needed for providers", "Auto-dispose support", "Code generation reduces boilerplate", "Excellent for dependency injection"],
-    cons: ["Learning curve for provider types", "ref.watch vs ref.read confusion", "Code generation adds build step", "API changes between major versions"],
+    description: "Compile-safe, testable state management (Riverpod 3.x). Notifier/AsyncNotifier-first API with no BuildContext dependency. Code generation with riverpod_generator (@riverpod) is the recommended style.",
+    pros: ["Compile-safe (no runtime errors)", "No BuildContext needed for providers", "Unified Notifier/AsyncNotifier API in 3.x", "Auto-dispose support", "@riverpod code generation reduces boilerplate", "Excellent for dependency injection"],
+    cons: ["Learning curve for provider types", "ref.watch vs ref.read confusion", "Code generation adds build step", "Legacy StateNotifier code needs migration"],
     whenToUse: "Any size app, when you want compile safety, dependency injection, or are starting a new project",
     example: `// Provider (read-only)
 final greetingProvider = Provider<String>((ref) {
   return 'Hello, World!';
 });
 
-// StateNotifierProvider (mutable state)
-final counterProvider = StateNotifierProvider<CounterNotifier, int>((ref) {
-  return CounterNotifier();
-});
+// NotifierProvider (mutable state) - the Riverpod 3 standard
+final counterProvider = NotifierProvider<CounterNotifier, int>(CounterNotifier.new);
 
-class CounterNotifier extends StateNotifier<int> {
-  CounterNotifier() : super(0);
+class CounterNotifier extends Notifier<int> {
+  @override
+  int build() => 0;
 
   void increment() => state = state + 1;
   void decrement() => state = state - 1;
@@ -100,24 +99,39 @@ class CounterNotifier extends StateNotifier<int> {
 }
 
 // AsyncNotifierProvider (async state)
-final usersProvider = AsyncNotifierProvider<UsersNotifier, List<User>>(() {
-  return UsersNotifier();
-});
+final usersProvider = AsyncNotifierProvider<UsersNotifier, List<User>>(UsersNotifier.new);
 
 class UsersNotifier extends AsyncNotifier<List<User>> {
   @override
   Future<List<User>> build() async {
-    return await ref.read(apiProvider).fetchUsers();
+    return ref.read(apiProvider).fetchUsers();
   }
 
   Future<void> addUser(User user) async {
     state = const AsyncLoading();
     state = await AsyncValue.guard(() async {
       await ref.read(apiProvider).createUser(user);
-      return await ref.read(apiProvider).fetchUsers();
+      return ref.read(apiProvider).fetchUsers();
     });
   }
 }
+
+// Recommended: @riverpod code generation (riverpod_generator)
+// part 'counter.g.dart';
+@riverpod
+class Counter extends _\$Counter {
+  @override
+  int build() => 0;
+
+  void increment() => state = state + 1;
+}
+// Generates counterProvider. Run:
+// dart run build_runner build --delete-conflicting-outputs
+
+// NOTE: StateNotifier / StateNotifierProvider are LEGACY in Riverpod 3.
+// They moved to a legacy import:
+//   import 'package:flutter_riverpod/legacy.dart';
+// Prefer Notifier / AsyncNotifier for all new code.
 
 // UI - ConsumerWidget
 class CounterPage extends ConsumerWidget {
@@ -558,7 +572,7 @@ class ${className}Bloc extends Bloc<${className}Event, ${className}State> {
 
   riverpod: {
     name: "Riverpod (Notifier + Provider)",
-    description: "Riverpod StateNotifier with provider, state class, and async support",
+    description: "Riverpod 3 Notifier with NotifierProvider, state class, and async support",
     generate: (name: string, props?: readonly string[]) => {
       const className = toPascalCase(name);
       const fileName = toSnakeCase(name);
@@ -612,8 +626,9 @@ ${copyWithBody}
 
 // ── Notifier ────────────────────────────────────────────────────────────
 
-class ${className}Notifier extends StateNotifier<${className}State> {
-  ${className}Notifier() : super(const ${className}State());
+class ${className}Notifier extends Notifier<${className}State> {
+  @override
+  ${className}State build() => const ${className}State();
 
   Future<void> load() async {
     state = state.copyWith(isLoading: true, error: null);
@@ -632,9 +647,20 @@ class ${className}Notifier extends StateNotifier<${className}State> {
 
 // ── Provider ────────────────────────────────────────────────────────────
 
-final ${varName}Provider = StateNotifierProvider<${className}Notifier, ${className}State>(
-  (ref) => ${className}Notifier(),
-);`;
+final ${varName}Provider = NotifierProvider<${className}Notifier, ${className}State>(
+  ${className}Notifier.new,
+);
+
+// Prefer the @riverpod codegen style (riverpod_generator) for new code:
+//   part '${fileName}_provider.g.dart';
+//
+//   @riverpod
+//   class ${className} extends _\$${className} {
+//     @override
+//     ${className}State build() => const ${className}State();
+//   }
+//
+// Then run: dart run build_runner build --delete-conflicting-outputs`;
     },
   },
 
@@ -733,7 +759,7 @@ part '${fileName}.freezed.dart';
 part '${fileName}.g.dart';
 
 @freezed
-class ${className} with _$${className} {
+abstract class ${className} with _$${className} {
   const factory ${className}({
 ${propDecls}
   }) = _${className};

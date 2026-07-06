@@ -563,38 +563,247 @@ List<ProcessedItem> _processInBackground(List<RawItem> items) {
     keywords: ["isolate", "concurrency", "compute", "background", "thread", "parallel"],
   },
 
-  // ── Macros (Preview) ──────────────────────────────────────────────────
+  // ── Modern Syntax (Dart 3.6+) ─────────────────────────────────────────
   {
-    name: "Macros",
-    version: "3.5+",
+    name: "Digit Separators",
+    version: "3.6",
+    category: "Syntax",
+    description: "Underscores in numeric literals to group digits for readability. Purely visual - the value is unchanged.",
+    syntax: `// Decimal
+final million = 1_000_000;
+final billion = 1_000_000_000;
+
+// Hex and binary
+final mask = 0xFF_FF_FF_FF;
+final flags = 0b1010_1010;
+
+// Doubles
+final micro = 0.000_001;
+final price = 1_299.99;`,
+    example: `const maxFileSize = 10_000_000; // 10 MB
+const timeoutMs = 30_000;
+const cardNumber = 1234_5678_9012_3456;
+
+// Separators do not change the value
+assert(1_000_000 == 1000000);`,
+    tips: "Separators can appear anywhere between digits, but not at the start or end of a literal, or next to the decimal point. Group decimals by thousands and hex/binary by bytes or nibbles.",
+    keywords: ["digit", "separator", "underscore", "literal", "number", "readability"],
+  },
+  {
+    name: "Wildcard Variables",
+    version: "3.7",
+    category: "Syntax",
+    description: "The identifier `_` is non-binding: it declares nothing, so multiple `_` parameters and local variables can coexist.",
+    syntax: `// Multiple wildcard parameters - no name collisions
+onDrag((_, _) => print('dragging'));
+
+// Unused local variable
+final _ = logAndReturn();
+
+// For loop where the element is unused
+for (final _ in items) {
+  count++;
+}`,
+    example: `// Callbacks that ignore their arguments
+stream.listen((_) => refresh());
+
+// Before Dart 3.7 each unused parameter needed a unique name (_, __, ___)
+grid.onCellTap((_, _, _) => deselect());
+
+// Wildcards in patterns were already non-binding
+switch (pair) {
+  case (int x, _):
+    print('first is $x');
+}`,
+    tips: "`_` no longer creates a variable, so you cannot read it after declaring it. Field and getter names starting with `_` are unaffected - that is still library privacy, not a wildcard.",
+    keywords: ["wildcard", "underscore", "unused", "parameter", "non-binding"],
+  },
+  {
+    name: "Null-Aware Elements",
+    version: "3.8",
+    category: "Syntax",
+    description: "A `?` before a collection element includes it only when it is non-null. Works in lists, sets, and map keys/values.",
+    syntax: `String? title;
+String? subtitle;
+int? id;
+
+final list = [?title, 'always here'];  // title omitted if null
+final set = {?title, ?subtitle};
+final map = {'id': ?id};               // entry omitted if id is null`,
+    example: `// Optional widgets without if-null boilerplate
+Column(
+  children: [
+    ?header,          // Widget? - skipped when null
+    const Divider(),
+    ?footer,
+  ],
+);
+
+// Before Dart 3.8:
+// if (header != null) header!,
+
+// Query params without null checks
+final params = {
+  'q': query,
+  'page': ?page?.toString(),
+  'filter': ?filter,
+};`,
+    tips: "Replaces the `if (x != null) x!` collection-if idiom. The `?` applies to a single element (or the map key/value it prefixes). For whole collections, the spread form `...?maybeList` still works.",
+    keywords: ["null-aware", "element", "collection", "list", "map", "set", "conditional"],
+  },
+  {
+    name: "Dot Shorthands",
+    version: "3.10",
+    category: "Syntax",
+    description: "Omit the type name when context already infers it: `.center` instead of `Alignment.center`. Works for enum values, static members, and constructors.",
+    syntax: `// Enum values
+Alignment alignment = .center;   // Alignment.center
+
+// Static members / constructors
+int x = .parse('42');            // int.parse('42')
+Duration d = .zero;              // Duration.zero
+
+// In arguments where the parameter type is known
+Container(alignment: .topLeft);`,
+    example: `// Widget code gets much terser
+Column(
+  mainAxisAlignment: .spaceBetween,
+  crossAxisAlignment: .start,
+  children: [/* ... */],
+);
+
+TextStyle(fontWeight: .bold);
+
+// Switch on enums
+final label = switch (status) {
+  .active => 'Active',
+  .inactive => 'Inactive',
+  .pending => 'Pending',
+};`,
+    tips: "The context type must be known - shorthands resolve against the expected type's static namespace. Great for enums, Alignment, EdgeInsets, Duration, etc. If the context type is dynamic or ambiguous, spell out the type name.",
+    keywords: ["dot", "shorthand", "enum", "static", "inference", "terse"],
+  },
+
+  // ── Constructors (Dart 3.12) ──────────────────────────────────────────
+  {
+    name: "Private Named Parameters",
+    version: "3.12",
+    category: "Types",
+    description: "Use `this._field` directly as a named constructor parameter. The public argument name is derived by stripping the leading underscore.",
+    syntax: `class ApiClient {
+  final String _baseUrl;
+  final Duration _timeout;
+
+  // Callers pass baseUrl: / timeout: - underscore is stripped
+  ApiClient({
+    required this._baseUrl,
+    this._timeout = const Duration(seconds: 30),
+  });
+}
+
+final client = ApiClient(baseUrl: 'https://api.example.com');`,
+    example: `// Before Dart 3.12 - manual forwarding boilerplate:
+class Counter {
+  final int _count;
+  Counter({required int count}) : _count = count;
+}
+
+// Dart 3.12:
+class Counter {
+  final int _count;
+  Counter({required this._count});
+}
+
+final c = Counter(count: 5); // public name derived automatically`,
+    tips: "Only the parameter's external name loses the underscore - the field itself stays private to the library. If stripping the underscore would collide with another parameter name, it is a compile error.",
+    keywords: ["private", "named", "parameter", "constructor", "underscore", "field"],
+  },
+  {
+    name: "Primary Constructors (Experimental)",
+    version: "3.12",
+    category: "Types",
+    description: "EXPERIMENTAL in Dart 3.12: declare constructor parameters and fields directly in the class header. Requires an experiment flag - not yet stable.",
+    syntax: `// Enable the experiment first:
+// dart --enable-experiment=primary-constructors
+//
+// analysis_options.yaml:
+// analyzer:
+//   enable-experiment:
+//     - primary-constructors
+
+class Point(final int x, final int y);
+
+// Equivalent to:
+class Point {
+  final int x;
+  final int y;
+  Point(this.x, this.y);
+}`,
+    example: `// Header parameters become fields
+class User(final String name, {final int age = 0});
+
+final u = User('Alice', age: 30);
+print(u.name); // Alice
+
+// Combine with a class body
+class Vector(final double x, final double y) {
+  double get length => sqrt(x * x + y * y);
+}`,
+    tips: "EXPERIMENTAL - syntax and semantics may change before stabilizing. Do not use in production code or published packages yet. Requires --enable-experiment=primary-constructors (and the matching analyzer setting) on Dart 3.12.",
+    keywords: ["primary", "constructor", "experimental", "header", "field", "boilerplate"],
+  },
+
+  // ── Macros (Cancelled) ────────────────────────────────────────────────
+  {
+    name: "Macros (Cancelled)",
+    version: "—",
     category: "Metaprogramming",
-    description: "Compile-time code generation. Macros inspect and augment code during compilation (experimental/preview).",
-    syntax: `// Using a macro (e.g., JsonCodable from dart:core)
-@JsonCodable()
-class User {
-  final String name;
-  final int age;
-}
-// Macro generates: fromJson(), toJson() at compile time
+    description: "Dart macros were cancelled by the Dart team in January 2025 and never shipped. Use build_runner with freezed and json_serializable instead - they remain the standard for code generation.",
+    syntax: `// Macros never shipped. Use build_runner codegen instead:
+//
+// pubspec.yaml
+// dependencies:
+//   freezed_annotation: ^3.0.0
+//   json_annotation: ^4.9.0
+// dev_dependencies:
+//   build_runner: ^2.4.0
+//   freezed: ^3.0.0
+//   json_serializable: ^6.9.0
 
-// Built-in macros (planned)
-// @DataClass()  - generates ==, hashCode, toString, copyWith
-// @JsonCodable() - generates JSON serialization`,
-    example: `// With macros (future)
-@JsonCodable()
-class Product {
-  final String id;
-  final String name;
-  final double price;
-  final List<String> tags;
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+part 'user.freezed.dart';
+part 'user.g.dart';
+
+@freezed
+abstract class User with _$User {
+  const factory User({
+    required String name,
+    required int age,
+  }) = _User;
+
+  factory User.fromJson(Map<String, dynamic> json) => _$UserFromJson(json);
+}`,
+    example: `// Generate the code:
+// dart run build_runner build --delete-conflicting-outputs
+
+@freezed
+abstract class Product with _$Product {
+  const factory Product({
+    required String id,
+    required String name,
+    required double price,
+    required List<String> tags,
+  }) = _Product;
+
+  factory Product.fromJson(Map<String, dynamic> json) =>
+      _$ProductFromJson(json);
 }
 
-// Macro auto-generates:
-// Product.fromJson(Map<String, dynamic> json)
-// Map<String, dynamic> toJson()
-// No build_runner needed!`,
-    tips: "Macros are experimental as of Dart 3.5. They aim to replace build_runner/code generation (json_serializable, freezed). Watch for @JsonCodable, @DataClass macros becoming stable.",
-    keywords: ["macro", "codegen", "compile-time", "json", "data class", "freezed"],
+// build_runner generates:
+// Product.fromJson / toJson, ==, hashCode, toString, copyWith`,
+    tips: "Macros were cancelled in January 2025 because compile-time performance could not be made acceptable. The Dart team instead invested in making build_runner faster and improving the analyzer. Stick with build_runner + freezed + json_serializable for data classes and JSON serialization.",
+    keywords: ["macro", "codegen", "compile-time", "json", "data class", "freezed", "cancelled", "build_runner"],
   },
 ];
 
@@ -610,7 +819,7 @@ export function formatDartFeatures(): string {
   }
 
   let text = "# Dart Language Features Reference\n\n";
-  text += `**${dartFeatures.length} features** covering Dart 2.7 through 3.5+\n\n`;
+  text += `**${dartFeatures.length} features** covering Dart 2.7 through 3.12\n\n`;
   text += "---\n\n";
 
   for (const [category, features] of categories) {

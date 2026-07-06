@@ -1,0 +1,27 @@
+{
+  "comment": "Baseline for scripts/check-updates.mjs. Updated when the monthly check's findings are acted on.",
+  "flutter": {
+    "stable": "3.44.4",
+    "dart": "3.12.2",
+    "beta": "3.46.0-0.3.pre"
+  },
+  "packages": {
+    "flutter_riverpod": "3.3.2",
+    "flutter_bloc": "9.1.1",
+    "bloc_concurrency": "0.3.0",
+    "go_router": "17.3.0",
+    "dio": "5.10.0",
+    "freezed": "3.2.5",
+    "json_serializable": "6.14.0",
+    "drift": "2.34.0",
+    "shared_preferences": "2.5.5",
+    "flutter_lints": "6.0.0",
+    "custom_lint": "0.8.1",
+    "riverpod_lint": "3.1.4",
+    "mocktail": "1.0.5",
+    "flutter_secure_storage": "10.3.1",
+    "intl": "0.20.3",
+    "ffi": "2.2.0"
+  },
+  "lastChecked": "2026-07-06T00:00:00.000Z"
+}

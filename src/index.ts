@@ -13,12 +13,15 @@ import { widgetLookup } from "./tools/widget-lookup.js";
 import { flutterErrorHelp } from "./tools/error-help.js";
 import { flutterBreakingChanges } from "./tools/breaking-changes.js";
 import { flutterCodegen, dartLanguageRef } from "./tools/codegen.js";
+import { sampleList, sampleGet, sampleFind, knowledgeLookup } from "./tools/samples.js";
+import { formatSamplesIndex, sampleCategories } from "./data/samples/index.js";
+import { formatKnowledgeIndex } from "./data/knowledge/index.js";
 
 // ── Create Server ──────────────────────────────────────────────────────
 
 const server = new McpServer({
   name: "flutter-coder",
-  version: "1.0.0",
+  version: "2.0.0",
 });
 
 // ── Resources (static reference content) ───────────────────────────────
@@ -68,6 +71,30 @@ server.resource(
   },
   async (uri) => ({
     contents: [{ uri: uri.href, mimeType: "text/markdown", text: formatStateManagement() }],
+  })
+);
+
+server.resource(
+  "samples-index",
+  "flutter://samples-index",
+  {
+    description: "Index of the verified advanced Flutter sample corpus (rendering, animation, architecture, async, platform, navigation, performance, testing, UI patterns)",
+    mimeType: "text/markdown",
+  },
+  async (uri) => ({
+    contents: [{ uri: uri.href, mimeType: "text/markdown", text: formatSamplesIndex() }],
+  })
+);
+
+server.resource(
+  "knowledge-base",
+  "flutter://knowledge-base",
+  {
+    description: "Index of the Flutter knowledge base: opinionated current guidance for structuring Flutter programs",
+    mimeType: "text/markdown",
+  },
+  async (uri) => ({
+    contents: [{ uri: uri.href, mimeType: "text/markdown", text: formatKnowledgeIndex() }],
   })
 );
 
@@ -170,6 +197,51 @@ server.tool(
   },
   async ({ template, name, props }) => ({
     content: [{ type: "text" as const, text: flutterCodegen(template, name, props) }],
+  })
+);
+
+server.tool(
+  "flutter_find_sample",
+  "FIRST STOP when writing advanced Flutter code. Search the verified sample corpus (custom render objects, shaders, slivers, animation physics, isolates, platform channels, go_router, golden tests, performance patterns) by describing what you're building. Returns the best-match sample in full with gotchas.",
+  {
+    need: z.string().describe("What you're building or trying to solve (e.g., 'animated chart with custom painter', 'background json parsing', 'deep link auth guard')"),
+  },
+  async ({ need }) => ({
+    content: [{ type: "text" as const, text: sampleFind(need) }],
+  })
+);
+
+server.tool(
+  "flutter_get_sample",
+  "Get a specific sample from the advanced corpus by id, with complete compilable code and notes.",
+  {
+    id: z.string().describe("Sample id from flutter_list_samples or flutter_find_sample (e.g., 'staggered-entrance-animation')"),
+  },
+  async ({ id }) => ({
+    content: [{ type: "text" as const, text: sampleGet(id) }],
+  })
+);
+
+server.tool(
+  "flutter_list_samples",
+  "Browse the advanced sample corpus index, optionally filtered by category.",
+  {
+    category: z.enum(sampleCategories as [string, ...string[]]).optional()
+      .describe("Filter by category"),
+  },
+  async ({ category }) => ({
+    content: [{ type: "text" as const, text: sampleList(category) }],
+  })
+);
+
+server.tool(
+  "flutter_knowledge",
+  "Opinionated, current best-practice guidance for Flutter projects: architecture, state management choice, project structure, theming, error handling, flavors/CI, package picks. Query by topic or entry id.",
+  {
+    query: z.string().describe("Topic, question, or entry id (e.g., 'project structure', 'which state management', 'build flavors')"),
+  },
+  async ({ query }) => ({
+    content: [{ type: "text" as const, text: knowledgeLookup(query) }],
   })
 );
 
