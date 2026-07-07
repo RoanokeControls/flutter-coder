@@ -1,6 +1,6 @@
 {
   "name": "flutter-coder-mcp",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Flutter/Dart MCP server: live API doc lookups, pub.dev package data, curated widget/error catalogs, Dart language reference, code generation, and a verified advanced-sample + knowledge corpus for building Flutter apps.",
   "type": "module",
   "main": "dist/index.js",
@@ -9,6 +9,7 @@
     "start": "node dist/index.js",
     "dev": "tsc --watch",
     "check-updates": "node scripts/check-updates.mjs",
+    "vendor-src": "node scripts/vendor-package-src.mjs",
     "pretest": "npm run build",
     "test": "node --test test/"
   },

@@ -27,6 +27,10 @@ in them cite versions verified live against the pub.dev API on that date.
 - `src/data/knowledge/entries.ts` — the knowledge base (contract in `types.ts`).
 - `src/data/*.ts` — widget catalog, error catalog, Dart features, state patterns + codegen templates.
 - `src/tools/` — tool implementations; live fetchers use the TTL cache in `src/cache.ts`.
+- `data/package-src/` — vendored pub.dev source of the flutter_reactive_ble federation
+  (`flutter_reactive_ble` + `reactive_ble_platform_interface` + `reactive_ble_mobile`,
+  incl. native Kotlin/Swift), exact published archives + `manifest.json`. Never hand-edit;
+  refresh with `npm run vendor-src` (`scripts/vendor-package-src.mjs`).
 - `data/version-state.json` — committed baseline for update checking (Flutter/Dart/tracked pub packages).
 - `scripts/check-updates.mjs` — CLI update probe (`npm run check-updates`, `--no-mark-seen` for dry runs).
 
@@ -34,6 +38,9 @@ in them cite versions verified live against the pub.dev API on that date.
 
 - `flutter_find_sample` / `flutter_get_sample` / `flutter_list_samples` — the verified corpus. **First stop when writing advanced Flutter code.**
 - `flutter_knowledge` — architecture/tooling guidance for new projects (structure, state management choice, theming, flavors/CI, package picks).
+- `flutter_source_search` / `flutter_source_read` — grep/read the vendored
+  flutter_reactive_ble federation source (Dart + native Android/iOS). Ground truth for
+  BLE implementation-behavior questions; BLE is a core concern of this server.
 - `flutter_docs` / `dart_docs` / `pub_package` — live lookups with caching.
 - `flutter_widget_lookup` / `flutter_error_help` / `dart_language_ref` — curated static reference.
 - `flutter_breaking_changes` — scrapes docs.flutter.dev; useful for migration planning.
@@ -54,6 +61,10 @@ Acting on those issues is a human+Claude job, done locally:
   affected samples against the new SDK, update KB `asOf` dates.
 - Package major → re-verify the samples using it (`packages` field says which),
   update `package-picks-2026` guidance.
+- Vendored-source drift (manifest vs live pub version) → `npm run vendor-src`,
+  re-verify the BLE samples, commit the refreshed `data/package-src/`. The test
+  suite pins vendored version == version-state == sample major, so a half-done
+  refresh fails `npm test`.
 - After acting, the script's default mark-seen rewrite of `data/version-state.json`
   gets committed with the content changes — that closes the loop.
 

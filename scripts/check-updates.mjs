@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const STATE_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "data", "version-state.json");
+const VENDOR_MANIFEST_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "data", "package-src", "manifest.json");
 const RELEASES_URL = "https://storage.googleapis.com/flutter_infra_release/releases/releases_macos.json";
 const STALE_MONTHS = 18;
 
@@ -89,6 +90,29 @@ const packages = await Promise.all(
 );
 const probed = packages.filter(Boolean);
 
+// ── Vendored package source (data/package-src/) ─────────────────────────
+// The manifest is maintained only by scripts/vendor-package-src.mjs, so
+// drift stays actionable every month until the source is re-vendored.
+let vendored = [];
+try {
+  const vendorManifest = JSON.parse(readFileSync(VENDOR_MANIFEST_PATH, "utf8"));
+  vendored = await Promise.all(
+    vendorManifest.map(async ({ name, version }) => {
+      try {
+        const live = probed.find((p) => p.name === name)?.live
+          ?? (await fetchJson(`https://pub.dev/api/packages/${name}`)).latest.version;
+        return { name, vendored: version, live, drifted: live !== version };
+      } catch (err) {
+        probeErrors.push(`pub.dev/${name} (vendored): ${err.message}`);
+        return null;
+      }
+    })
+  );
+  vendored = vendored.filter(Boolean);
+} catch {
+  // No vendored source yet — nothing to check.
+}
+
 // ── Report ──────────────────────────────────────────────────────────────
 const actionable = [];
 if (flutter?.stable.changed)
@@ -101,11 +125,16 @@ for (const p of probed) {
   if (p.staleMonths)
     actionable.push(`${p.name} last published ${p.staleMonths} months ago: reconsider as a recommended pick.`);
 }
+for (const v of vendored) {
+  if (v.drifted)
+    actionable.push(`vendored source for ${v.name} is ${v.vendored} but ${v.live} is live: run \`npm run vendor-src\`, then re-verify the samples teaching it.`);
+}
 
 const report = {
   checkedAt: new Date().toISOString(),
   flutter,
   packages: probed,
+  vendoredSource: vendored,
   actionable,
   probeErrors,
 };

@@ -14,6 +14,7 @@ import { flutterErrorHelp } from "./tools/error-help.js";
 import { flutterBreakingChanges } from "./tools/breaking-changes.js";
 import { flutterCodegen, dartLanguageRef } from "./tools/codegen.js";
 import { sampleList, sampleGet, sampleFind, knowledgeLookup } from "./tools/samples.js";
+import { sourceRead, sourceSearch } from "./tools/package-source.js";
 import { formatSamplesIndex, sampleCategories } from "./data/samples/index.js";
 import { formatKnowledgeIndex } from "./data/knowledge/index.js";
 
@@ -21,7 +22,7 @@ import { formatKnowledgeIndex } from "./data/knowledge/index.js";
 
 const server = new McpServer({
   name: "flutter-coder",
-  version: "2.2.0",
+  version: "2.3.0",
 });
 
 // ── Resources (static reference content) ───────────────────────────────
@@ -242,6 +243,34 @@ server.tool(
   },
   async ({ query }) => ({
     content: [{ type: "text" as const, text: knowledgeLookup(query) }],
+  })
+);
+
+server.tool(
+  "flutter_source_search",
+  "Grep the vendored ground-truth source of flutter_reactive_ble and its federation (reactive_ble_platform_interface, reactive_ble_mobile — Dart API, Android Kotlin, iOS/macOS Swift, protobuf codecs), pinned at the exact versions the sample corpus was verified against. Use when the answer lives in the implementation: what a call actually throws, how the native side maps a GATT status, what goes over the method channel.",
+  {
+    query: z.string().describe("Case-insensitive regex or plain fragment (e.g., 'GATT_ERROR|status 133', 'requestMtu', 'class Central')"),
+    package: z.string().optional()
+      .describe("Restrict to one vendored package: flutter_reactive_ble, reactive_ble_platform_interface, or reactive_ble_mobile"),
+    max_results: z.number().optional().describe("Cap on matched lines (default 30, max 100)"),
+  },
+  async ({ query, package: pkg, max_results }) => ({
+    content: [{ type: "text" as const, text: sourceSearch(query, pkg, max_results) }],
+  })
+);
+
+server.tool(
+  "flutter_source_read",
+  "Read a file or directory from the vendored flutter_reactive_ble federation source. Call with no path for the package tree and version manifest; a directory path lists it; a file path returns numbered source (paged, 500 lines max per call).",
+  {
+    path: z.string().optional()
+      .describe("Path relative to the source root (e.g., 'flutter_reactive_ble/lib/src/reactive_ble.dart'). Omit for the overview."),
+    start_line: z.number().optional().describe("First line to return (1-based)"),
+    end_line: z.number().optional().describe("Last line to return"),
+  },
+  async ({ path, start_line, end_line }) => ({
+    content: [{ type: "text" as const, text: sourceRead(path, start_line, end_line) }],
   })
 );
 

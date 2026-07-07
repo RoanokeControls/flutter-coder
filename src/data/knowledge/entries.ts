@@ -1233,6 +1233,15 @@ reactive_ble idioms — verified against the official PhilipsHue example app
   RSSI stays fresh.
 - \`readRssi(deviceId)\` is available for link-quality UX.
 
+**When docs and samples don't settle it, read the implementation**: this
+server vendors the full published source of the reactive_ble federation
+(\`flutter_reactive_ble\`, \`reactive_ble_platform_interface\`,
+\`reactive_ble_mobile\` — Dart plus the Android Kotlin and iOS/macOS Swift
+native layers) at the exact verified versions. \`flutter_source_search\` greps
+it, \`flutter_source_read\` reads it. That's the ground truth for what a call
+actually throws, how the Kotlin side handles GATT statuses, or what the
+protobuf codec puts on the method channel.
+
 ## Direct WiFi/LAN — same network, big payloads
 
 The device runs the server (ESP-IDF \`esp_http_server\` does HTTP + WebSocket).

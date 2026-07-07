@@ -1,0 +1,26 @@
+[
+  {
+    "name": "flutter_reactive_ble",
+    "version": "5.5.0",
+    "published": "2026-05-22T10:29:58.116359Z",
+    "fetchedAt": "2026-07-07T16:48:04.500Z",
+    "files": 22,
+    "bytes": 177290
+  },
+  {
+    "name": "reactive_ble_platform_interface",
+    "version": "5.5.0",
+    "published": "2026-05-22T10:28:26.980110Z",
+    "fetchedAt": "2026-07-07T16:48:04.811Z",
+    "files": 31,
+    "bytes": 47199
+  },
+  {
+    "name": "reactive_ble_mobile",
+    "version": "5.5.0",
+    "published": "2026-05-22T10:28:46.617377Z",
+    "fetchedAt": "2026-07-07T16:48:05.087Z",
+    "files": 89,
+    "bytes": 509360
+  }
+]
